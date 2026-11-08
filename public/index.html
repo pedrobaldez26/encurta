@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>encurta</title>
+  <style>
+    :root { --bg:#fafaf8; --fg:#1d1f21; --muted:#6c7075; --line:#e4e4df; --accent:#2b5bd7; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin:0; font:15px/1.5 system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--fg); }
+    main { max-width:780px; margin:0 auto; padding:2rem 1rem 4rem; }
+    h1 { font-size:1.4rem; margin:0 0 1.5rem; }
+    h2 { font-size:1rem; margin:2rem 0 .75rem; }
+    form { display:flex; gap:.5rem; flex-wrap:wrap; }
+    input, button { font:inherit; padding:.5rem .65rem; border:1px solid var(--line); border-radius:6px; background:#fff; }
+    input[name=url] { flex:1 1 320px; }
+    input[name=slug] { width:150px; }
+    button { background:var(--accent); color:#fff; border-color:var(--accent); cursor:pointer; }
+    button.plain { background:none; color:var(--accent); border:none; padding:0 .25rem; text-decoration:underline; }
+    table { width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line); }
+    th, td { padding:.5rem .7rem; border-bottom:1px solid var(--line); text-align:left; font-size:.9rem; vertical-align:top; }
+    td.dest { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
+    .msg { color:#b3261e; min-height:1.4em; margin:.5rem 0 0; }
+    .ok { color:#1b6e3c; }
+    .bars div { display:grid; grid-template-columns:96px minmax(20px,1fr) 28px; gap:.5rem; align-items:center; font-size:.85rem; margin:.15rem 0; }
+    .bars div > span:nth-child(2) { display:block; }
+    .bars div > span:nth-child(1) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .bars i { display:block; height:8px; background:var(--accent); border-radius:4px; }
+    .panel { background:#fff; border:1px solid var(--line); padding:1rem; border-radius:6px; }
+    .cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:1rem; }
+    #keybox { margin-bottom:1.5rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>encurta</h1>
+
+  <form id="keybox">
+    <input type="password" id="key" placeholder="API key" autocomplete="off">
+    <button>Entrar</button>
+  </form>
+
+  <section id="app" hidden>
+    <form id="create">
+      <input name="url" type="url" placeholder="https://um-link-bem-grande.com/..." required>
+      <input name="slug" placeholder="apelido (opcional)" pattern="[A-Za-z0-9_\-]{3,32}">
+      <button>Encurtar</button>
+    </form>
+    <p class="msg" id="msg"></p>
+
+    <h2>Links</h2>
+    <table>
+      <thead><tr><th>Curto</th><th>Destino</th><th>Cliques</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+
+    <section id="stats" hidden>
+      <h2 id="stats-title"></h2>
+      <div class="panel"><p id="stats-totals"></p>
+        <div class="cols">
+          <div><strong>Por dia (30 dias)</strong><div class="bars" id="by-day"></div></div>
+          <div><strong>Origem</strong><div class="bars" id="by-ref"></div></div>
+          <div><strong>Navegador</strong><div class="bars" id="by-browser"></div></div>
+        </div>
+      </div>
+    </section>
+  </section>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let key = sessionStorage.getItem('encurta-key') || '';
+
+  async function api(path, opts = {}) {
+    const res = await fetch(path, {
+      ...opts,
+      headers: { 'x-api-key': key, 'content-type': 'application/json' },
+    });
+    if (res.status === 401) { sessionStorage.removeItem('encurta-key'); location.reload(); }
+    return res;
+  }
+
+  function cell(tag, text) { const el = document.createElement(tag); el.textContent = text; return el; }
+
+  async function loadLinks() {
+    const links = await (await api('/api/links')).json();
+    const rows = $('rows');
+    rows.replaceChildren();
+    for (const l of links) {
+      const tr = document.createElement('tr');
+      const short = document.createElement('td');
+      const a = cell('a', l.shortUrl); a.href = l.shortUrl; a.target = '_blank'; a.rel = 'noopener';
+      short.append(a);
+      const dest = cell('td', l.url); dest.className = 'dest'; dest.title = l.url;
+      const actions = document.createElement('td');
+      const s = cell('button', 'stats'); s.className = 'plain'; s.onclick = () => showStats(l.slug);
+      const d = cell('button', 'apagar'); d.className = 'plain';
+      d.onclick = async () => { if (confirm('Apagar ' + l.slug + '?')) { await api('/api/links/' + l.slug, { method: 'DELETE' }); loadLinks(); $('stats').hidden = true; } };
+      actions.append(s, d);
+      tr.append(short, dest, cell('td', String(l.clicks)), actions);
+      rows.append(tr);
+    }
+  }
+
+  function bars(el, items, label) {
+    el.replaceChildren();
+    const max = Math.max(1, ...items.map((i) => i.clicks));
+    if (!items.length) { el.append(cell('div', 'sem dados')); return; }
+    for (const it of items) {
+      const row = document.createElement('div');
+      const bar = document.createElement('i'); bar.style.width = (it.clicks / max * 100) + '%';
+      const wrap = document.createElement('span'); wrap.append(bar);
+      row.append(cell('span', label(it)), wrap, cell('span', String(it.clicks)));
+      el.append(row);
+    }
+  }
+
+  async function showStats(slug) {
+    const s = await (await api('/api/links/' + slug + '/stats')).json();
+    $('stats').hidden = false;
+    $('stats-title').textContent = '/' + s.slug;
+    $('stats-totals').textContent = s.total + ' cliques, ' + s.unique + ' visitantes únicos';
+    bars($('by-day'), s.byDay, (i) => i.day.slice(5));
+    bars($('by-ref'), s.byReferrer, (i) => i.referrer);
+    bars($('by-browser'), s.byBrowser, (i) => i.browser);
+  }
+
+  const errors = {
+    invalid_url: 'URL inválida.', unsupported_protocol: 'Só aceito http e https.',
+    slug_taken: 'Esse apelido já existe.', invalid_slug: 'Apelido inválido (3 a 32 letras, números, - ou _).',
+    points_to_self: 'Não dá para encurtar um link do próprio encurta.', credentials_in_url: 'A URL não pode ter usuário e senha.',
+  };
+
+  $('create').onsubmit = async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    if (!data.slug) delete data.slug;
+    const res = await api('/api/links', { method: 'POST', body: JSON.stringify(data) });
+    const body = await res.json();
+    $('msg').className = res.ok ? 'msg ok' : 'msg';
+    $('msg').textContent = res.ok ? 'Criado: ' + body.shortUrl : (errors[body.error] || 'Não foi possível criar.');
+    if (res.ok) { e.target.reset(); loadLinks(); }
+  };
+
+  $('keybox').onsubmit = (e) => {
+    e.preventDefault();
+    key = $('key').value;
+    sessionStorage.setItem('encurta-key', key);
+    start();
+  };
+
+  function start() {
+    if (!key) return;
+    $('keybox').hidden = true;
+    $('app').hidden = false;
+    loadLinks();
+  }
+  start();
+</script>
+</body>
+</html>
